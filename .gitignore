@@ -42,5 +42,6 @@ yarn-error.log*
 
 # Keys - NEVER commit
 *.keypair
+*-keypair.json
 *.json.bak
 wallet.json
