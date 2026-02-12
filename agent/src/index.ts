@@ -1,7 +1,9 @@
+import "dotenv/config";
 import { PriceMonitor } from "./monitor";
 import { RiskEngine } from "./risk-engine";
 import { SwapExecutor } from "./executor";
 import { YieldTracker } from "./yield-tracker";
+import { OnChainClient } from "./on-chain";
 import {
   ACTION_CONFIG,
   STABLECOIN_NAMES,
@@ -18,6 +20,8 @@ export interface AgentState {
   isRunning: boolean;
   lastTick: Date | null;
   tickCount: number;
+  programId: string;
+  authority: string;
 }
 
 let agentState: AgentState = {
@@ -27,6 +31,8 @@ let agentState: AgentState = {
   isRunning: false,
   lastTick: null,
   tickCount: 0,
+  programId: "A1NxaEoNRreaTCMaiNLfXBKj1bU13Trhwjr2h5Xvbmmr",
+  authority: "",
 };
 
 export function getAgentState(): AgentState {
@@ -38,6 +44,7 @@ class StableGuardAgent {
   private riskEngine: RiskEngine;
   private executor: SwapExecutor;
   private yieldTracker: YieldTracker;
+  private onChain: OnChainClient;
   private isRunning = false;
   private riskScores: Map<StablecoinSymbol, number> = new Map();
 
@@ -46,6 +53,8 @@ class StableGuardAgent {
     this.riskEngine = new RiskEngine();
     this.executor = new SwapExecutor();
     this.yieldTracker = new YieldTracker();
+    this.onChain = new OnChainClient();
+    agentState.authority = this.onChain.authorityPublicKey.toBase58();
   }
 
   async start(): Promise<void> {
@@ -64,6 +73,13 @@ class StableGuardAgent {
 
     this.isRunning = true;
     agentState.isRunning = true;
+
+    // Initialize on-chain PDAs
+    try {
+      await this.onChain.initializeAll();
+    } catch (error) {
+      console.error("[Agent] On-chain init failed (continuing off-chain):", error);
+    }
 
     // Fetch initial yields
     await this.updateYields();
@@ -140,6 +156,7 @@ class StableGuardAgent {
       };
       this.executor.logAction(action);
       agentState.actions = this.executor.getRecentActions(50);
+      this.onChain.logActionOnChain(action).catch(() => {});
 
     } else if (state.riskScore >= ACTION_CONFIG.REBALANCE_THRESHOLD) {
       // HIGH - Auto-rebalance
@@ -154,6 +171,7 @@ class StableGuardAgent {
       };
       this.executor.logAction(action);
       agentState.actions = this.executor.getRecentActions(50);
+      this.onChain.logActionOnChain(action).catch(() => {});
 
     } else if (state.riskScore >= ACTION_CONFIG.ALERT_THRESHOLD) {
       // MEDIUM - Alert only (don't spam - alert once per symbol per elevation)
@@ -173,6 +191,7 @@ class StableGuardAgent {
         };
         this.executor.logAction(action);
         agentState.actions = this.executor.getRecentActions(50);
+        this.onChain.logActionOnChain(action).catch(() => {});
       }
     }
   }

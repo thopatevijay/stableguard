@@ -30,6 +30,7 @@ test-ledger/
 # AI/Tool configs
 .claude/
 .omc/
+.dev-refs.md
 
 # OS
 .DS_Store
