@@ -27,6 +27,10 @@ test-ledger/
 *.swp
 *.swo
 
+# AI/Tool configs
+.claude/
+.omc/
+
 # OS
 .DS_Store
 Thumbs.db

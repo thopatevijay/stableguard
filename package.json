@@ -1,0 +1,22 @@
+{
+  "name": "stableguard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous Stablecoin Risk Intelligence Agent for Solana",
+  "workspaces": [
+    "agent",
+    "app"
+  ],
+  "scripts": {
+    "agent:dev": "npm run dev --workspace=agent",
+    "agent:build": "npm run build --workspace=agent",
+    "agent:start": "npm run start --workspace=agent",
+    "app:dev": "npm run dev --workspace=app",
+    "app:build": "npm run build --workspace=app",
+    "anchor:build": "anchor build",
+    "anchor:test": "anchor test",
+    "anchor:deploy": "anchor deploy"
+  },
+  "keywords": ["solana", "stablecoin", "defi", "ai-agent", "risk-management"],
+  "license": "MIT"
+}
