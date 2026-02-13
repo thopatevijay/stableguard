@@ -26,6 +26,7 @@ export interface AgentState {
   programId: string;
   authority: string;
   regime: MarketRegime;
+  agentWallet?: { enabled: boolean; address: string };
 }
 
 let agentState: AgentState = {
@@ -66,6 +67,12 @@ class StableGuardAgent {
     this.explainer = new DecisionExplainer();
     this.regimeDetector = new RegimeDetector();
     agentState.authority = this.onChain.authorityPublicKey.toBase58();
+    if (this.onChain.isAgentWalletEnabled) {
+      agentState.agentWallet = {
+        enabled: true,
+        address: this.onChain.agentWalletAddress!,
+      };
+    }
   }
 
   async start(): Promise<void> {
@@ -80,6 +87,11 @@ class StableGuardAgent {
     console.log(`[Agent] Alert threshold: ${ACTION_CONFIG.ALERT_THRESHOLD}`);
     console.log(`[Agent] Rebalance threshold: ${ACTION_CONFIG.REBALANCE_THRESHOLD}`);
     console.log(`[Agent] Emergency threshold: ${ACTION_CONFIG.EMERGENCY_THRESHOLD}`);
+    if (this.onChain.isAgentWalletEnabled) {
+      console.log(`[Agent] Wallet: AgentWallet (@${this.onChain.agentWalletAddress?.slice(0, 8)}...)`);
+    } else {
+      console.log(`[Agent] Wallet: Local keypair`);
+    }
     console.log("─".repeat(52));
 
     this.isRunning = true;
