@@ -49,8 +49,8 @@ export const ACTION_CONFIG = {
 // Pyth Hermes endpoint
 export const PYTH_HERMES_URL = "https://hermes.pyth.network";
 
-// Jupiter API
-export const JUPITER_API_URL = "https://quote-api.jup.ag/v6";
+// Jupiter API (public endpoint)
+export const JUPITER_API_URL = "https://public.jupiterapi.com";
 
 // Helius RPC (devnet fallback)
 export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
