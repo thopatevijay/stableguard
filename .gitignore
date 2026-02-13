@@ -31,6 +31,16 @@ test-ledger/
 .claude/
 .omc/
 .dev-refs.md
+CLAUDE.md
+
+# Internal docs (not for judges)
+PRD.md
+RESEARCH-PRP.md
+Colosseum-Agent-Hackathon.md
+VIDEO-PRODUCTION-PLAN.md
+
+# Presentation
+video/
 
 # OS
 .DS_Store
