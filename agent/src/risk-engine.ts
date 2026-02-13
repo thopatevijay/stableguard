@@ -18,18 +18,33 @@ export class RiskEngine {
     }
   }
 
-  calculateRiskScore(priceData: PriceData, priceHistory: PriceData[], jupiterLiquidityScore?: number): StablecoinState {
+  /**
+   * Calculate composite risk score for a stablecoin.
+   * @param peerPrices - prices of other stablecoins for cross-correlation detection
+   */
+  calculateRiskScore(
+    priceData: PriceData,
+    priceHistory: PriceData[],
+    jupiterLiquidityScore?: number,
+    peerPrices?: { symbol: string; price: number }[]
+  ): StablecoinState {
     const priceDeviationScore = this.calcPriceDeviationScore(priceData.price);
     const liquidityScore = jupiterLiquidityScore ?? this.calcLiquidityScore(priceData);
     const volumeAnomalyScore = this.calcVolumeAnomalyScore(priceData.symbol, priceHistory);
     const whaleFlowScore = this.calcWhaleFlowScore(priceData.symbol);
 
-    const riskScore = Math.round(
+    let riskScore = Math.round(
       priceDeviationScore * RISK_WEIGHTS.PRICE_DEVIATION +
       liquidityScore * RISK_WEIGHTS.LIQUIDITY +
       volumeAnomalyScore * RISK_WEIGHTS.VOLUME_ANOMALY +
       whaleFlowScore * RISK_WEIGHTS.WHALE_FLOW
     );
+
+    // Cross-stablecoin correlation adjustment
+    riskScore += this.calcCorrelationBonus(priceData, peerPrices);
+
+    // Time-of-day risk modifier
+    riskScore += this.calcTimeOfDayModifier();
 
     return {
       symbol: priceData.symbol,
@@ -113,6 +128,51 @@ export class RiskEngine {
       case "HIGH": return "#f97316";      // orange
       case "CRITICAL": return "#ef4444";  // red
     }
+  }
+
+  /**
+   * Cross-stablecoin correlation: if multiple stablecoins deviate simultaneously,
+   * it signals market-wide stress — add risk bonus.
+   */
+  private calcCorrelationBonus(
+    current: PriceData,
+    peerPrices?: { symbol: string; price: number }[]
+  ): number {
+    if (!peerPrices || peerPrices.length === 0) return 0;
+
+    const currentDev = Math.abs(current.price - 1.0);
+    if (currentDev < 0.001) return 0; // Current token is fine, no bonus
+
+    const deviatingPeers = peerPrices.filter(
+      (p) => p.symbol !== current.symbol && Math.abs(p.price - 1.0) > 0.001
+    );
+
+    if (deviatingPeers.length >= 2) return 20; // All stablecoins deviating — market-wide stress
+    if (deviatingPeers.length >= 1) return 10; // 2+ stablecoins deviating — contagion signal
+    return 0;
+  }
+
+  /**
+   * Time-of-day risk modifier: higher risk during low-liquidity periods.
+   */
+  private calcTimeOfDayModifier(): number {
+    const now = new Date();
+    const utcHour = now.getUTCHours();
+    const dayOfWeek = now.getUTCDay(); // 0=Sun, 6=Sat
+
+    let modifier = 0;
+
+    // Weekend: lower liquidity historically
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      modifier += 5;
+    }
+
+    // Low-liquidity hours (UTC 0-6): Asia evening / US night
+    if (utcHour >= 0 && utcHour < 6) {
+      modifier += 3;
+    }
+
+    return modifier;
   }
 
   private stdDev(values: number[]): number {

@@ -52,8 +52,11 @@ export const PYTH_HERMES_URL = "https://hermes.pyth.network";
 // Jupiter API (public endpoint)
 export const JUPITER_API_URL = "https://public.jupiterapi.com";
 
-// Helius RPC (devnet fallback)
-export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
+// Helius RPC (auto-detected when HELIUS_API_KEY is set, otherwise devnet fallback)
+export const SOLANA_RPC_URL =
+  process.env.HELIUS_API_KEY
+    ? `https://devnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
+    : process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
 
 export type StablecoinSymbol = "USDC" | "USDT" | "PYUSD";
 
@@ -71,6 +74,26 @@ export interface StablecoinState {
   feedUnavailable?: boolean;
 }
 
+// Market regime types
+export type MarketRegime = "normal" | "stressed" | "crisis";
+
+// Structured reasoning for agent decisions
+export interface RiskFactor {
+  name: string;
+  score: number;
+  weight: number;
+  detail: string;
+}
+
+export interface ActionReasoning {
+  summary: string;
+  factors: RiskFactor[];
+  regime: MarketRegime;
+  decision: string;
+  alternatives: string[];
+  thresholdContext: string;
+}
+
 export interface AgentAction {
   timestamp: Date;
   type: "ALERT" | "REBALANCE" | "EMERGENCY_EXIT" | "MONITOR";
@@ -78,4 +101,5 @@ export interface AgentAction {
   toToken?: StablecoinSymbol;
   riskScore: number;
   details: string;
+  reasoning?: ActionReasoning;
 }

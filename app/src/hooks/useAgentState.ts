@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { AgentState } from "../lib/types";
+import type { AgentState, ActionReasoning } from "../lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_AGENT_API_URL || "http://localhost:3001";
 
@@ -72,6 +72,19 @@ function generateDemoState(): AgentState {
         fromToken: "PYUSD",
         riskScore: 28,
         details: "PYUSD liquidity thinning on Jupiter. Slippage up to 0.3% for $100K.",
+        reasoning: {
+          summary: "ELEVATED: PYUSD risk at 28/100 (price: $1.0001). Monitoring closely.",
+          factors: [
+            { name: "Price Deviation", score: 0, weight: 0.40, detail: "Price $1.0001 (0.01% from peg)" },
+            { name: "Liquidity", score: 15, weight: 0.30, detail: "Jupiter slippage < 0.3% for $100K" },
+            { name: "Volume Anomaly", score: 10, weight: 0.20, detail: "Volatility within normal range" },
+            { name: "Whale Flow", score: 25, weight: 0.10, detail: "Large transfer activity detected (score: 25)" },
+          ],
+          regime: "normal",
+          decision: "ALERT",
+          alternatives: ["USDC (risk: 3/100)", "USDT (risk: 7/100)"],
+          thresholdContext: "Current: 28. Next action at 51 (REBALANCE).",
+        } as ActionReasoning,
       },
     ],
     yields: [
@@ -87,6 +100,7 @@ function generateDemoState(): AgentState {
     tickCount: 142,
     programId: "A1NxaEoNRreaTCMaiNLfXBKj1bU13Trhwjr2h5Xvbmmr",
     authority: "HUQAKz25erBqbuMSm3e4TuNQFtMLTH3tqAPrJ9Do1HpA",
+    regime: "normal",
   };
 }
 

@@ -47,6 +47,7 @@ export default function Dashboard() {
         isRunning={state.isRunning}
         tickCount={state.tickCount}
         programId={state.programId}
+        regime={state.regime}
       />
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">

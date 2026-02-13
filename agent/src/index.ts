@@ -4,12 +4,15 @@ import { RiskEngine } from "./risk-engine";
 import { SwapExecutor } from "./executor";
 import { YieldTracker } from "./yield-tracker";
 import { OnChainClient } from "./on-chain";
+import { DecisionExplainer } from "./decision-explainer";
+import { RegimeDetector } from "./regime-detector";
 import {
   ACTION_CONFIG,
   STABLECOIN_NAMES,
   type StablecoinSymbol,
   type StablecoinState,
   type AgentAction,
+  type MarketRegime,
 } from "./config";
 
 // Global state for API consumption (dashboard reads this)
@@ -22,6 +25,7 @@ export interface AgentState {
   tickCount: number;
   programId: string;
   authority: string;
+  regime: MarketRegime;
 }
 
 let agentState: AgentState = {
@@ -33,6 +37,7 @@ let agentState: AgentState = {
   tickCount: 0,
   programId: "A1NxaEoNRreaTCMaiNLfXBKj1bU13Trhwjr2h5Xvbmmr",
   authority: "",
+  regime: "normal" as MarketRegime,
 };
 
 export function getAgentState(): AgentState {
@@ -45,9 +50,12 @@ class StableGuardAgent {
   private executor: SwapExecutor;
   private yieldTracker: YieldTracker;
   private onChain: OnChainClient;
+  private explainer: DecisionExplainer;
+  private regimeDetector: RegimeDetector;
   private isRunning = false;
   private riskScores: Map<StablecoinSymbol, number> = new Map();
   private liquidityCache: Map<StablecoinSymbol, number> = new Map();
+  private currentRegime: MarketRegime = "normal";
 
   constructor() {
     this.monitor = new PriceMonitor();
@@ -55,6 +63,8 @@ class StableGuardAgent {
     this.executor = new SwapExecutor();
     this.yieldTracker = new YieldTracker();
     this.onChain = new OnChainClient();
+    this.explainer = new DecisionExplainer();
+    this.regimeDetector = new RegimeDetector();
     agentState.authority = this.onChain.authorityPublicKey.toBase58();
   }
 
@@ -93,9 +103,10 @@ class StableGuardAgent {
         console.error("[Agent] Tick error:", error);
       }
 
-      // Dynamic interval based on risk level
+      // Dynamic interval based on risk level and regime
       const maxRisk = Math.max(...Array.from(this.riskScores.values()), 0);
-      const interval = maxRisk > ACTION_CONFIG.ALERT_THRESHOLD
+      const isElevated = maxRisk > ACTION_CONFIG.ALERT_THRESHOLD || this.currentRegime !== "normal";
+      const interval = isElevated
         ? ACTION_CONFIG.FAST_MONITORING_INTERVAL_MS
         : ACTION_CONFIG.MONITORING_INTERVAL_MS;
 
@@ -122,10 +133,13 @@ class StableGuardAgent {
       await this.updateLiquidityScores(prices);
     }
 
+    // Build peer prices for cross-correlation
+    const peerPrices = prices.map((p) => ({ symbol: p.symbol, price: p.price }));
+
     for (const priceData of prices) {
       const history = this.monitor.getHistory(priceData.symbol);
       const jupLiquidity = this.liquidityCache.get(priceData.symbol);
-      const state = this.riskEngine.calculateRiskScore(priceData, history, jupLiquidity);
+      const state = this.riskEngine.calculateRiskScore(priceData, history, jupLiquidity, peerPrices);
       states.push(state);
       this.riskScores.set(priceData.symbol, state.riskScore);
     }
@@ -150,46 +164,65 @@ class StableGuardAgent {
       }
     }
 
-    // 3. Update global state
+    // 3. Detect market regime
+    this.currentRegime = this.regimeDetector.detect(
+      states,
+      (symbol) => this.monitor.getHistory(symbol as StablecoinSymbol)
+    );
+    agentState.regime = this.currentRegime;
+
+    // 4. Update global state
     agentState.stablecoins = states;
     agentState.lastTick = new Date();
 
-    // 4. Log status
+    // 5. Log status
     this.logStatus(states);
 
-    // 5. Evaluate actions for each stablecoin
+    // 6. Evaluate actions for each stablecoin
     for (const state of states) {
       await this.evaluateAction(state);
     }
 
-    // 6. Periodically update yields (every 30 ticks = ~5 min)
+    // 7. Periodically update yields (every 30 ticks = ~5 min)
     if (agentState.tickCount % 30 === 0) {
       await this.updateYields();
     }
   }
 
   private async evaluateAction(state: StablecoinState): Promise<void> {
-    const riskLevel = this.riskEngine.getRiskLevel(state.riskScore);
+    if (state.feedUnavailable) return;
 
-    if (state.riskScore >= ACTION_CONFIG.EMERGENCY_THRESHOLD) {
+    // Regime-adjusted thresholds
+    const multiplier = this.regimeDetector.getThresholdMultiplier(this.currentRegime);
+    const emergencyThreshold = Math.round(ACTION_CONFIG.EMERGENCY_THRESHOLD * multiplier);
+    const rebalanceThreshold = Math.round(ACTION_CONFIG.REBALANCE_THRESHOLD * multiplier);
+    const alertThreshold = Math.round(ACTION_CONFIG.ALERT_THRESHOLD * multiplier);
+
+    const allStates = agentState.stablecoins;
+
+    if (state.riskScore >= emergencyThreshold) {
       // CRITICAL - Emergency exit with swap simulation
+      const reasoning = this.explainer.explain(state, allStates, this.currentRegime, "EMERGENCY_EXIT");
       const safest = this.executor.findSafestStablecoin(this.riskScores, state.symbol);
       const action = await this.executor.executeProtectiveSwap(
         state.symbol, safest, state.riskScore, "EMERGENCY_EXIT"
       );
+      action.reasoning = reasoning;
       agentState.actions = this.executor.getRecentActions(50);
       this.onChain.logActionOnChain(action).catch(() => {});
 
-    } else if (state.riskScore >= ACTION_CONFIG.REBALANCE_THRESHOLD) {
+    } else if (state.riskScore >= rebalanceThreshold) {
       // HIGH - Auto-rebalance with swap simulation
+      const reasoning = this.explainer.explain(state, allStates, this.currentRegime, "REBALANCE");
       const safest = this.executor.findSafestStablecoin(this.riskScores, state.symbol);
       const action = await this.executor.executeProtectiveSwap(
         state.symbol, safest, state.riskScore, "REBALANCE"
       );
+      action.reasoning = reasoning;
       agentState.actions = this.executor.getRecentActions(50);
       this.onChain.logActionOnChain(action).catch(() => {});
 
-    } else if (state.riskScore >= ACTION_CONFIG.ALERT_THRESHOLD) {
+    } else if (state.riskScore >= alertThreshold) {
       // MEDIUM - Alert only (don't spam - alert once per symbol per elevation)
       const recentActions = this.executor.getRecentActions(5);
       const alreadyAlerted = recentActions.some(
@@ -198,12 +231,14 @@ class StableGuardAgent {
       );
 
       if (!alreadyAlerted) {
+        const reasoning = this.explainer.explain(state, allStates, this.currentRegime, "ALERT");
         const action: AgentAction = {
           timestamp: new Date(),
           type: "ALERT",
           fromToken: state.symbol,
           riskScore: state.riskScore,
-          details: `ELEVATED: ${state.symbol} risk at ${state.riskScore}/100 (price: $${state.price.toFixed(4)}). Monitoring closely.`,
+          details: reasoning.summary,
+          reasoning,
         };
         this.executor.logAction(action);
         agentState.actions = this.executor.getRecentActions(50);
@@ -252,11 +287,13 @@ class StableGuardAgent {
 
   private logStatus(states: StablecoinState[]): void {
     const parts = states.map(s => {
+      if (s.feedUnavailable) return `⚫ ${s.symbol}: N/A`;
       const level = this.riskEngine.getRiskLevel(s.riskScore);
       const icon = level === "LOW" ? "🟢" : level === "MEDIUM" ? "🟡" : level === "HIGH" ? "🟠" : "🔴";
       return `${icon} ${s.symbol}: $${s.price.toFixed(4)} (risk: ${s.riskScore})`;
     });
-    console.log(`[Tick ${agentState.tickCount}] ${parts.join(" | ")}`);
+    const regimeIcon = this.currentRegime === "crisis" ? "🔴" : this.currentRegime === "stressed" ? "🟡" : "🟢";
+    console.log(`[Tick ${agentState.tickCount}] ${regimeIcon} ${this.currentRegime.toUpperCase()} | ${parts.join(" | ")}`);
   }
 
   stop(): void {

@@ -12,6 +12,24 @@ export interface StablecoinState {
   feedUnavailable?: boolean;
 }
 
+export type MarketRegime = "normal" | "stressed" | "crisis";
+
+export interface RiskFactor {
+  name: string;
+  score: number;
+  weight: number;
+  detail: string;
+}
+
+export interface ActionReasoning {
+  summary: string;
+  factors: RiskFactor[];
+  regime: MarketRegime;
+  decision: string;
+  alternatives: string[];
+  thresholdContext: string;
+}
+
 export interface AgentAction {
   timestamp: string;
   type: "ALERT" | "REBALANCE" | "EMERGENCY_EXIT" | "MONITOR";
@@ -19,6 +37,7 @@ export interface AgentAction {
   toToken?: string;
   riskScore: number;
   details: string;
+  reasoning?: ActionReasoning;
 }
 
 export interface YieldData {
@@ -38,6 +57,7 @@ export interface AgentState {
   tickCount: number;
   programId: string;
   authority: string;
+  regime?: MarketRegime;
 }
 
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
