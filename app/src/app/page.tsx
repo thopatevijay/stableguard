@@ -8,7 +8,7 @@ import ActionLog from "../components/ActionLog";
 import YieldTable from "../components/YieldTable";
 
 export default function Dashboard() {
-  const { state, error, priceHistory } = useAgentState(5000);
+  const { state, error, isDemo, priceHistory } = useAgentState(5000);
 
   if (error && !state) {
     return (
@@ -50,8 +50,16 @@ export default function Dashboard() {
       />
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        {/* Demo mode banner */}
+        {isDemo && (
+          <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg px-4 py-3 text-sm text-cyan-400 flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+            Demo Mode — showing simulated data. Run <code className="mx-1 px-1.5 py-0.5 bg-gray-800 rounded text-xs">npm run agent:dev</code> locally for live Pyth oracle feeds.
+          </div>
+        )}
+
         {/* Connection error banner */}
-        {error && (
+        {error && !isDemo && (
           <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-4 py-2 text-sm text-yellow-400">
             Connection interrupted. Retrying... Last data from{" "}
             {state.lastTick
