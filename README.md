@@ -4,7 +4,9 @@
 
 StableGuard monitors USDC, USDT, and PYUSD stablecoin prices in real-time via Pyth Network oracles, computes composite risk scores, and autonomously executes protective swaps via Jupiter when depeg risk exceeds configurable thresholds. All state — treasury holdings, risk scores, action history — is recorded on-chain in Anchor PDAs.
 
-> Built for the [Colosseum Agent Hackathon](https://colosseum.com/agent-hackathon) (Feb 2–13, 2026)
+> Built for the [Colosseum Agent Hackathon](https://colosseum.com/agent-hackathon) (Feb 2-13, 2026)
+
+**Live Dashboard:** [stableguard-app.vercel.app](https://stableguard-app.vercel.app)
 
 ---
 
@@ -20,46 +22,101 @@ Today, stablecoin holders must manually monitor prices, check liquidity, and exe
 
 ---
 
-## How It Works
+## What Makes This Autonomous (Not Just Automation)
+
+A cron job that checks prices is **automation**. StableGuard is an **agent** — it perceives, reasons, decides, acts, and explains without human intervention.
+
+### The OODA Loop Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  STABLEGUARD AGENT                   │
-│                                                      │
-│   Pyth Oracles ──► Risk Engine ──► Jupiter Swaps     │
-│   (USDC/USDT/     (0-100 score)   (auto-protect)    │
-│    PYUSD prices)                                     │
-│         │              │                │            │
-│         ▼              ▼                ▼            │
-│   ┌──────────────────────────────────────────┐       │
-│   │         Solana On-Chain (Anchor)          │       │
-│   │   Treasury PDA │ ActionLog PDA │ Config   │       │
-│   └──────────────────────────────────────────┘       │
-└──────────────────────┬──────────────────────────────┘
-                       │ HTTP API
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│            NEXT.JS DASHBOARD                         │
-│   Risk Gauges │ Price Charts │ Action Log │ Yields   │
-└─────────────────────────────────────────────────────┘
+Every 10 seconds (3 seconds when risk elevated):
+
+ OBSERVE          ORIENT            DECIDE            ACT
+ ─────────       ──────────       ──────────       ──────────
+ Pyth prices  →  Composite     →  Regime-aware  →  Jupiter
+ Jupiter         risk scoring     strategy          swap exec
+ liquidity       (4 weighted      selection         On-chain
+ Yield rates     factors)                           logging
+ Peer prices     Regime detect                      Alert
+                 Correlation
+                 Time-of-day
+                      │
+                      ▼
+                  EXPLAIN
+                  ──────────
+                  Structured reasoning
+                  for every decision
 ```
 
-### Agent Loop (every 10 seconds)
+### 7 Autonomous Behaviors (Zero Human Intervention)
 
-1. **Fetch** — Pull real-time prices from Pyth Network Hermes for USDC, USDT, PYUSD
-2. **Score** — Compute composite risk (0–100) per stablecoin:
-   - Price deviation from $1.00 peg (40% weight)
-   - Liquidity depth via Jupiter quote slippage (30%)
-   - Volume anomaly detection (20%)
-   - Whale flow tracking (10%)
-3. **Act** — Based on risk thresholds:
-   | Score | Action |
-   |-------|--------|
-   | 0–25  | Monitor (LOW) |
-   | 26–50 | Alert + increase frequency (MEDIUM) |
-   | 51–75 | Auto-rebalance to safer stablecoin (HIGH) |
-   | 76–100 | Emergency exit to most stable asset (CRITICAL) |
-4. **Record** — Log every action on-chain via Anchor PDA (ring buffer of 20 entries)
+| # | Behavior | How It Works |
+|---|----------|--------------|
+| 1 | **Multi-source perception** | Synthesizes Pyth oracles + Jupiter liquidity + protocol yields + peer prices — not just one metric |
+| 2 | **Composite reasoning** | Weighted risk scoring across 4 dimensions (price deviation 40%, liquidity 30%, volume anomaly 20%, whale flow 10%) |
+| 3 | **Market regime detection** | Classifies market as NORMAL / STRESSED / CRISIS and dynamically adjusts thresholds (20-40% more sensitive in crisis) |
+| 4 | **Cross-stablecoin correlation** | Detects contagion — if multiple stablecoins deviate simultaneously, risk scores increase (+10/+20 bonus) |
+| 5 | **Time-of-day awareness** | Higher sensitivity during weekends (+5) and low-liquidity hours UTC 0-6 (+3) — USX crashed on Dec 26 |
+| 6 | **Adaptive polling** | 10s normal → 3s when risk elevated or regime is stressed/crisis |
+| 7 | **Explainable decisions** | Every action includes structured reasoning: factor breakdown, alternatives considered, threshold context |
+
+### Example Agent Reasoning
+
+When the agent takes an action, it generates structured reasoning like this:
+
+```
+REBALANCE: USDC risk at 62/100 (price: $0.9940) [STRESSED regime]
+
+Factors:
+  Price Deviation:  55  (40%)  — Price $0.9940 (0.60% from peg)
+  Liquidity:        45  (30%)  — Jupiter slippage 1.2% for $100K
+  Volume Anomaly:   50  (20%)  — Volatility significantly above baseline
+  Whale Flow:        0  (10%)  — No large transfers detected
+
+Alternatives: USDT (risk: 12/100), PYUSD (feed unavailable)
+Threshold: Current 62. Emergency exit at 46 (crisis-adjusted).
+Action: Swap $10,000 USDC → 9,988.50 USDT (slippage: 0.12%)
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      DATA SOURCES                            │
+│  Pyth Hermes    │  Jupiter v6 API  │  Kamino / MarginFi     │
+│  Price Feeds    │  Swap Quotes     │  Yield Rates           │
+└────────┬────────────────┬──────────────────┬────────────────┘
+         │                │                  │
+┌────────▼────────────────▼──────────────────▼────────────────┐
+│              STABLEGUARD AGENT (TypeScript)                   │
+│              Port 3001 — HTTP API                             │
+│                                                              │
+│  ┌────────────┐  ┌─────────────┐  ┌───────────────────┐    │
+│  │ Price      │  │ Risk Score  │  │ Swap Executor     │    │
+│  │ Monitor    │─▶│ Engine      │─▶│ (Jupiter)         │    │
+│  │ (Pyth SDK) │  │ (Composite) │  │ + Action Logger   │    │
+│  └────────────┘  └─────────────┘  └───────────────────┘    │
+│                                                              │
+│  ┌────────────┐  ┌─────────────┐  ┌───────────────────┐    │
+│  │ Regime     │  │ Decision    │  │ Yield             │    │
+│  │ Detector   │  │ Explainer   │  │ Tracker           │    │
+│  └────────────┘  └─────────────┘  └───────────────────┘    │
+│                                                              │
+│  API: GET /api/state  │  GET /api/health                    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+┌─────────▼──────┐  ┌─────▼──────┐  ┌──────▼──────────────┐
+│ Solana Devnet  │  │ Dashboard  │  │ On-Chain Anchor     │
+│ (Helius RPC)   │  │ (Next.js)  │  │ Program             │
+│                │  │ Port 3000  │  │ - Treasury PDA      │
+│                │  │            │  │ - ActionLog PDA     │
+│                │  │            │  │ - RiskConfig PDA    │
+└────────────────┘  └────────────┘  └─────────────────────┘
+```
 
 ---
 
@@ -74,6 +131,8 @@ Today, stablecoin holders must manually monitor prices, check liquidity, and exe
 | Agent | TypeScript (Node.js) | Monitoring loop + risk engine + HTTP API |
 | Dashboard | Next.js 14 + TailwindCSS | Real-time risk visualization |
 | Charts | Recharts | Live price feed + risk score charts |
+| RPC | Helius (optional) | Reliable Solana devnet access |
+| Wallet | AgentWallet (Frames.ag) | Secure agent wallet management |
 | Network | Solana Devnet | Blockchain deployment |
 
 ---
@@ -82,25 +141,27 @@ Today, stablecoin holders must manually monitor prices, check liquidity, and exe
 
 ```
 stableguard/
-├── agent/                    # TypeScript monitoring agent
+├── agent/                         # TypeScript monitoring agent
 │   └── src/
-│       ├── index.ts          # Main loop + HTTP API (port 3001)
-│       ├── config.ts         # Constants, feed IDs, thresholds
-│       ├── monitor.ts        # Pyth Hermes price feed polling
-│       ├── risk-engine.ts    # Composite risk scoring (0-100)
-│       ├── executor.ts       # Jupiter swap execution + logging
-│       ├── yield-tracker.ts  # Kamino/MarginFi yield fetching
-│       └── on-chain.ts       # Anchor PDA initialization + logging
-├── app/                      # Next.js dashboard
+│       ├── index.ts               # Main loop + HTTP API (port 3001)
+│       ├── config.ts              # Constants, feed IDs, thresholds, types
+│       ├── monitor.ts             # Pyth Hermes price feed polling
+│       ├── risk-engine.ts         # Composite risk scoring + correlation + time-of-day
+│       ├── executor.ts            # Jupiter swap execution + logging
+│       ├── decision-explainer.ts  # Structured reasoning for every action
+│       ├── regime-detector.ts     # Market regime classification (normal/stressed/crisis)
+│       ├── yield-tracker.ts       # Kamino/MarginFi yield fetching
+│       └── on-chain.ts            # Anchor PDA initialization + logging
+├── app/                           # Next.js dashboard
 │   └── src/
-│       ├── app/page.tsx      # Main dashboard layout
-│       ├── components/       # RiskGauge, PriceChart, ActionLog, YieldTable
-│       ├── hooks/            # useAgentState (polling hook)
-│       └── lib/types.ts      # Shared TypeScript types
-├── programs/stableguard/     # Anchor on-chain program (Rust)
-│   └── src/lib.rs            # Treasury, ActionLog, RiskConfig PDAs
-├── package.json              # npm workspaces (agent + app)
-└── Anchor.toml               # Devnet deployment config
+│       ├── app/page.tsx           # Main dashboard layout
+│       ├── components/            # RiskGauge, PriceChart, ActionLog, YieldTable, Header
+│       ├── hooks/                 # useAgentState (polling hook + demo mode)
+│       └── lib/types.ts           # Shared TypeScript types
+├── programs/stableguard/          # Anchor on-chain program (Rust)
+│   └── src/lib.rs                 # Treasury, ActionLog, RiskConfig PDAs
+├── package.json                   # npm workspaces (agent + app)
+└── Anchor.toml                    # Devnet deployment config
 ```
 
 ---
@@ -111,7 +172,7 @@ stableguard/
 
 - Node.js 18+
 - Rust + Solana CLI + Anchor CLI
-- Solana wallet with devnet SOL (`solana airdrop 5`)
+- Solana wallet with devnet SOL
 
 ### 1. Clone & Install
 
@@ -121,7 +182,16 @@ cd stableguard
 npm install
 ```
 
-### 2. Start the Agent
+### 2. Configure Environment
+
+```bash
+cp .env.example .env
+# Add your keys:
+# HELIUS_API_KEY=your_helius_key (optional, improves RPC reliability)
+# AGENTWALLET_TOKEN=mf_your_token (optional, for AgentWallet integration)
+```
+
+### 3. Start the Agent
 
 ```bash
 npm run agent:dev
@@ -129,20 +199,31 @@ npm run agent:dev
 
 The agent starts monitoring USDC, USDT, and PYUSD prices, computing risk scores every 10 seconds, and serving state via HTTP API on port 3001.
 
-### 3. Start the Dashboard
+### 4. Start the Dashboard
 
 ```bash
 npm run app:dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to see real-time risk gauges, price charts, action logs, and yield comparisons.
+Open [http://localhost:3000](http://localhost:3000) to see real-time risk gauges, price charts, action logs with expandable reasoning, and yield comparisons.
 
-### 4. (Optional) Build & Deploy Anchor Program
+### 5. (Optional) Build & Deploy Anchor Program
 
 ```bash
 npm run anchor:build
 npm run anchor:deploy
 ```
+
+---
+
+## Dashboard Features
+
+- **Risk Gauges** — Color-coded circular gauges per stablecoin with factor breakdown bars
+- **Price Feed (Live)** — Real-time Pyth oracle price chart with $1.00 peg reference line
+- **Agent Actions** — Expandable cards showing structured reasoning, factor scores, alternatives, and threshold context
+- **Yield Comparison** — Kamino & MarginFi APYs with highlighted best rates
+- **Regime Badge** — NORMAL (green) / STRESSED (yellow) / CRISIS (red) indicator in header
+- **Demo Mode** — Auto-activates with simulated data when agent is offline (Vercel deployment)
 
 ---
 
@@ -174,8 +255,8 @@ The agent exposes an HTTP API on port 3001:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/state` | Full agent state: stablecoin prices, risk scores, actions, yields |
-| `GET /api/health` | Health check |
+| `GET /api/state` | Full agent state: stablecoins, risk scores, actions with reasoning, yields, regime |
+| `GET /api/health` | Health check + uptime |
 
 ---
 
@@ -184,10 +265,21 @@ The agent exposes an HTTP API on port 3001:
 StableGuard deeply integrates with the Solana ecosystem:
 
 - **Pyth Network** — Real-time oracle price feeds for USDC, USDT, PYUSD (via Hermes REST API)
-- **Jupiter** — DEX aggregator for swap quoting and execution across all Solana liquidity
+- **Jupiter** — DEX aggregator for swap quoting, execution, and liquidity depth measurement
 - **Anchor** — On-chain program storing treasury state, action logs, and risk configuration in PDAs
 - **Kamino & MarginFi** — DeFi yield data for cross-protocol comparison
-- **SPL Tokens** — Native Solana token standard for stablecoin tracking
+- **Helius** — Reliable RPC access (auto-detected when `HELIUS_API_KEY` is set)
+- **AgentWallet** — Secure wallet management for agent signing operations
+
+---
+
+## Future Vision
+
+- **Multi-chain expansion** — Extend to Ethereum L2s via Pyth cross-chain feeds
+- **On-chain risk scoring** — Deploy risk classifier via Cauldron (RISC-V on Solana)
+- **Webhook alerts** — Telegram/Discord notifications for risk events
+- **Portfolio optimization** — Risk-adjusted yield allocation across protocols
+- **Historical learning** — Track rebalance profitability and auto-adjust sensitivity
 
 ---
 
