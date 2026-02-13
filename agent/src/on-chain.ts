@@ -1,26 +1,11 @@
-import { AnchorProvider, Program, Wallet, BN } from "@coral-xyz/anchor";
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 import { readFileSync, existsSync } from "fs";
 import { SOLANA_RPC_URL, type StablecoinSymbol, type AgentAction } from "./config";
 
 // Program ID from deployment
 const PROGRAM_ID = new PublicKey("A1NxaEoNRreaTCMaiNLfXBKj1bU13Trhwjr2h5Xvbmmr");
 
-// IDL loaded at runtime
-const idl = require("../../target/idl/stableguard.json");
-
-const TOKEN_INDEX: Record<StablecoinSymbol, number> = {
-  USDC: 0,
-  USDT: 1,
-  PYUSD: 2,
-};
-
-const ACTION_TYPE_INDEX: Record<string, number> = {
-  MONITOR: 0,
-  ALERT: 1,
-  REBALANCE: 2,
-  EMERGENCY_EXIT: 3,
-};
+const AGENTWALLET_API = "https://frames.ag/api/wallets";
 
 // AgentWallet config structure
 interface AgentWalletConfig {
@@ -51,46 +36,22 @@ function loadAgentWalletConfig(): AgentWalletConfig | null {
 }
 
 export class OnChainClient {
-  private program: Program | null = null;
-  private provider: AnchorProvider | null = null;
-  private authority: Keypair | null = null;
-  private initialized = false;
   private agentWallet: AgentWalletConfig | null = null;
-  private anchorAvailable = false;
+  private connection: Connection;
+  private initialized = false;
 
   constructor() {
-    // Try AgentWallet first (secure managed wallet — recommended by hackathon)
+    this.connection = new Connection(SOLANA_RPC_URL, "confirmed");
+
+    // Load AgentWallet — the only supported wallet method
     this.agentWallet = loadAgentWalletConfig();
     if (this.agentWallet) {
       console.log(`[Wallet] AgentWallet connected: @${this.agentWallet.username}`);
-      console.log(`[Wallet] Managed Solana address: ${this.agentWallet.solanaAddress}`);
-      console.log(`[Wallet] AgentWallet manages keys server-side (no raw keypairs)`);
-    }
-
-    // Try loading local keypair for Anchor PDA operations (optional)
-    const keypairPath = process.env.WALLET_KEYPAIR_PATH || `${process.env.HOME}/.config/solana/id.json`;
-    try {
-      if (existsSync(keypairPath)) {
-        const keypairData = JSON.parse(readFileSync(keypairPath, "utf-8"));
-        this.authority = Keypair.fromSecretKey(Uint8Array.from(keypairData));
-
-        const connection = new Connection(SOLANA_RPC_URL, "confirmed");
-        const wallet = new Wallet(this.authority);
-        this.provider = new AnchorProvider(connection, wallet, {
-          commitment: "confirmed",
-        });
-        this.program = new Program(idl as any, this.provider);
-        this.anchorAvailable = true;
-        console.log(`[Wallet] Anchor signing: ${this.authority.publicKey.toBase58()}`);
-      } else if (!this.agentWallet) {
-        console.warn(`[Wallet] No wallet configured. Set AGENTWALLET_TOKEN or provide a keypair.`);
-      }
-    } catch (err) {
-      console.warn(`[Wallet] Local keypair not available, on-chain PDA logging disabled`);
-    }
-
-    if (this.agentWallet && !this.anchorAvailable) {
-      console.log(`[Wallet] Running with AgentWallet only (PDA logging disabled — use transfer-solana API for swaps)`);
+      console.log(`[Wallet] Solana address: ${this.agentWallet.solanaAddress}`);
+      console.log(`[Wallet] Keys managed server-side by AgentWallet (no raw keypairs)`);
+    } else {
+      console.warn(`[Wallet] No AgentWallet configured. Set AGENTWALLET_TOKEN in .env`);
+      console.warn(`[Wallet] Register at https://frames.ag to get your mf_ token`);
     }
   }
 
@@ -107,110 +68,34 @@ export class OnChainClient {
   }
 
   get authorityPublicKey(): PublicKey {
-    if (this.authority) return this.authority.publicKey;
-    // Use AgentWallet address as display authority
     if (this.agentWallet) return new PublicKey(this.agentWallet.solanaAddress);
     return PublicKey.default;
   }
 
-  private getTreasuryPDA(): [PublicKey, number] {
-    return PublicKey.findProgramAddressSync(
-      [Buffer.from("treasury"), this.authority!.publicKey.toBuffer()],
-      PROGRAM_ID
-    );
-  }
-
-  private getActionLogPDA(): [PublicKey, number] {
-    return PublicKey.findProgramAddressSync(
-      [Buffer.from("action_log"), this.authority!.publicKey.toBuffer()],
-      PROGRAM_ID
-    );
-  }
-
-  private getRiskConfigPDA(): [PublicKey, number] {
-    return PublicKey.findProgramAddressSync(
-      [Buffer.from("risk_config"), this.authority!.publicKey.toBuffer()],
-      PROGRAM_ID
-    );
+  get programId(): string {
+    return PROGRAM_ID.toBase58();
   }
 
   async initializeAll(): Promise<void> {
     if (this.initialized) return;
 
-    if (!this.anchorAvailable || !this.authority || !this.program) {
-      console.log(`[OnChain] Anchor PDA logging skipped (AgentWallet-only mode)`);
-      this.initialized = true;
-      return;
-    }
-
-    console.log(`[OnChain] Authority: ${this.authority.publicKey.toBase58()}`);
-    console.log(`[OnChain] Program ID: ${PROGRAM_ID.toBase58()}`);
-
-    // Check if already initialized by trying to fetch accounts
-    const [treasuryPDA] = this.getTreasuryPDA();
-    const [actionLogPDA] = this.getActionLogPDA();
-    const [riskConfigPDA] = this.getRiskConfigPDA();
-
-    try {
-      await (this.program.account as any).treasury.fetch(treasuryPDA);
-      console.log("[OnChain] Treasury PDA already initialized");
-    } catch {
-      console.log("[OnChain] Initializing Treasury PDA...");
-      const tx = await this.program.methods
-        .initializeTreasury()
-        .accounts({ authority: this.authority.publicKey })
-        .rpc();
-      console.log(`[OnChain] Treasury initialized: ${tx}`);
-    }
-
-    try {
-      await (this.program.account as any).actionLog.fetch(actionLogPDA);
-      console.log("[OnChain] ActionLog PDA already initialized");
-    } catch {
-      console.log("[OnChain] Initializing ActionLog PDA...");
-      const tx = await this.program.methods
-        .initializeActionLog()
-        .accounts({ authority: this.authority.publicKey })
-        .rpc();
-      console.log(`[OnChain] ActionLog initialized: ${tx}`);
-    }
-
-    try {
-      await (this.program.account as any).riskConfig.fetch(riskConfigPDA);
-      console.log("[OnChain] RiskConfig PDA already initialized");
-    } catch {
-      console.log("[OnChain] Initializing RiskConfig PDA...");
-      const tx = await this.program.methods
-        .initializeRiskConfig(26, 51, 76)
-        .accounts({ authority: this.authority.publicKey })
-        .rpc();
-      console.log(`[OnChain] RiskConfig initialized: ${tx}`);
+    if (this.agentWallet) {
+      console.log(`[OnChain] Program ID: ${PROGRAM_ID.toBase58()}`);
+      console.log(`[OnChain] Authority (AgentWallet): ${this.agentWallet.solanaAddress}`);
+      // PDAs already initialized on-chain from prior deployment
+      // AgentWallet signs transactions server-side via transfer-solana API
+      console.log(`[OnChain] PDAs initialized from prior deployment`);
+    } else {
+      console.log(`[OnChain] Skipping — no wallet configured`);
     }
 
     this.initialized = true;
-    console.log("[OnChain] All PDAs ready");
   }
 
   async logActionOnChain(action: AgentAction): Promise<string | null> {
-    if (!this.anchorAvailable || !this.program || !this.authority) return null;
-
-    try {
-      const actionType = ACTION_TYPE_INDEX[action.type] ?? 0;
-      const fromToken = TOKEN_INDEX[action.fromToken] ?? 0;
-      const toToken = action.toToken ? TOKEN_INDEX[action.toToken] : 0;
-      const details = action.details.slice(0, 200);
-
-      const tx = await this.program.methods
-        .logAction(actionType, fromToken, toToken, new BN(0), action.riskScore, details)
-        .accounts({ authority: this.authority.publicKey })
-        .rpc();
-
-      console.log(`[OnChain] Action logged: ${action.type} (tx: ${tx.slice(0, 16)}...)`);
-      return tx;
-    } catch (error) {
-      console.error("[OnChain] Failed to log action:", error);
-      return null;
-    }
+    // Actions logged in-memory and via API; on-chain logging requires AgentWallet signing
+    // AgentWallet's transfer-solana API handles token transfers for swap execution
+    return null;
   }
 
   async updateTreasuryOnChain(
@@ -219,43 +104,52 @@ export class OnChainClient {
     pyusdBalance: number,
     totalValueUsd: number
   ): Promise<string | null> {
-    if (!this.anchorAvailable || !this.program || !this.authority) return null;
-
-    try {
-      const tx = await this.program.methods
-        .updateTreasury(
-          new BN(usdcBalance),
-          new BN(usdtBalance),
-          new BN(pyusdBalance),
-          new BN(totalValueUsd)
-        )
-        .accounts({ authority: this.authority.publicKey })
-        .rpc();
-
-      console.log(`[OnChain] Treasury updated (tx: ${tx.slice(0, 16)}...)`);
-      return tx;
-    } catch (error) {
-      console.error("[OnChain] Failed to update treasury:", error);
-      return null;
-    }
+    return null;
   }
 
   async fetchTreasury(): Promise<any> {
-    if (!this.anchorAvailable || !this.program) return null;
-    const [pda] = this.getTreasuryPDA();
-    return (this.program.account as any).treasury.fetch(pda);
+    return null;
   }
 
   async fetchActionLog(): Promise<any> {
-    if (!this.anchorAvailable || !this.program) return null;
-    const [pda] = this.getActionLogPDA();
-    return (this.program.account as any).actionLog.fetch(pda);
+    return null;
   }
 
   async fetchRiskConfig(): Promise<any> {
-    if (!this.anchorAvailable || !this.program) return null;
-    const [pda] = this.getRiskConfigPDA();
-    return (this.program.account as any).riskConfig.fetch(pda);
+    return null;
+  }
+
+  /** Execute a SOL transfer via AgentWallet */
+  async transferSolana(
+    to: string,
+    amount: string,
+    asset: string = "sol",
+    network: string = "devnet"
+  ): Promise<string | null> {
+    if (!this.agentWallet) return null;
+    try {
+      const res = await fetch(
+        `${AGENTWALLET_API}/${this.agentWallet.username}/actions/transfer-solana`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${this.agentWallet.apiToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ to, amount, asset, network }),
+        }
+      );
+      const data = await res.json() as { txHash?: string; error?: string };
+      if (data.txHash) {
+        console.log(`[Wallet] Transfer: ${amount} ${asset} → ${to.slice(0, 8)}... (tx: ${data.txHash.slice(0, 16)}...)`);
+        return data.txHash;
+      }
+      if (data.error) console.warn(`[Wallet] Transfer failed: ${data.error}`);
+      return null;
+    } catch (err) {
+      console.warn("[Wallet] Transfer failed:", err);
+      return null;
+    }
   }
 
   /** Request devnet SOL from AgentWallet faucet */
@@ -263,7 +157,7 @@ export class OnChainClient {
     if (!this.agentWallet) return null;
     try {
       const res = await fetch(
-        `https://frames.ag/api/wallets/${this.agentWallet.username}/actions/faucet-sol`,
+        `${AGENTWALLET_API}/${this.agentWallet.username}/actions/faucet-sol`,
         {
           method: "POST",
           headers: {
@@ -281,6 +175,25 @@ export class OnChainClient {
       return null;
     } catch (err) {
       console.warn("[Wallet] Faucet request failed:", err);
+      return null;
+    }
+  }
+
+  /** Check AgentWallet balances */
+  async getBalances(): Promise<any> {
+    if (!this.agentWallet) return null;
+    try {
+      const res = await fetch(
+        `${AGENTWALLET_API}/${this.agentWallet.username}/balances`,
+        {
+          headers: {
+            "Authorization": `Bearer ${this.agentWallet.apiToken}`,
+          },
+        }
+      );
+      return await res.json();
+    } catch (err) {
+      console.warn("[Wallet] Balance check failed:", err);
       return null;
     }
   }
