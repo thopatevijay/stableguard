@@ -29,6 +29,7 @@ export function useAgentState(pollInterval = 5000) {
           ...historyRef.current,
         };
         for (const coin of data.stablecoins) {
+          if (coin.feedUnavailable) continue; // Skip unavailable feeds
           const key = coin.symbol;
           const existing = updated[key] || [];
           const newEntry = { time: now, price: coin.price };
