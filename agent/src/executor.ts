@@ -63,14 +63,15 @@ export class SwapExecutor {
   async checkLiquidity(
     fromToken: StablecoinSymbol,
     toToken: StablecoinSymbol
-  ): Promise<number> {
+  ): Promise<number | null> {
     // Check slippage for a $100K swap (100K USDC = 100_000_000_000 lamports for 6 decimals)
     const testAmount = 100_000 * 1_000_000; // $100K in 6-decimal lamports
     const quote = await this.getQuote(fromToken, toToken, testAmount);
 
-    if (!quote) return 100; // Max risk if we can't get a quote
+    if (!quote) return null; // Return null so risk engine can fall back
 
-    const slippage = parseFloat(quote.priceImpactPct);
+    const slippage = Math.abs(parseFloat(quote.priceImpactPct));
+    console.log(`[Liquidity] ${fromToken}→${toToken} slippage: ${slippage}% for $100K`);
 
     // Convert slippage to liquidity risk score
     if (slippage < 0.1) return 0;
@@ -79,6 +80,42 @@ export class SwapExecutor {
     if (slippage < 1.0) return 50;
     if (slippage < 2.0) return 75;
     return 100;
+  }
+
+  async executeProtectiveSwap(
+    fromToken: StablecoinSymbol,
+    toToken: StablecoinSymbol,
+    riskScore: number,
+    actionType: "REBALANCE" | "EMERGENCY_EXIT"
+  ): Promise<AgentAction> {
+    // Get quote for a simulated $10K swap
+    const amount = 10_000 * 1_000_000; // $10K in 6-decimal lamports
+    const quote = await this.getQuote(fromToken, toToken, amount);
+
+    let details: string;
+    let txSignature = "simulated";
+
+    if (quote) {
+      const outAmount = (parseInt(quote.outAmount) / 1_000_000).toFixed(2);
+      const slippage = Math.abs(parseFloat(quote.priceImpactPct)).toFixed(4);
+      details = `${actionType}: Swap $10,000 ${fromToken} → ${outAmount} ${toToken} (slippage: ${slippage}%, risk: ${riskScore}/100) [SIMULATED on devnet]`;
+      console.log(`[Executor] Quote: ${fromToken} → ${toToken} | In: $10,000 | Out: $${outAmount} | Slippage: ${slippage}%`);
+    } else {
+      details = `${actionType}: Would swap ${fromToken} → ${toToken} (risk: ${riskScore}/100). Jupiter quote unavailable. [SIMULATED]`;
+      console.log(`[Executor] Simulated swap ${fromToken} → ${toToken} (no quote available)`);
+    }
+
+    const action: AgentAction = {
+      timestamp: new Date(),
+      type: actionType,
+      fromToken,
+      toToken,
+      riskScore,
+      details,
+    };
+
+    this.logAction(action);
+    return action;
   }
 
   findSafestStablecoin(

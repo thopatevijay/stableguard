@@ -68,6 +68,7 @@ export interface StablecoinState {
   volumeAnomalyScore: number;
   whaleFlowScore: number;
   lastUpdated: Date;
+  feedUnavailable?: boolean;
 }
 
 export interface AgentAction {

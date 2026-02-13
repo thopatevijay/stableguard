@@ -18,9 +18,9 @@ export class RiskEngine {
     }
   }
 
-  calculateRiskScore(priceData: PriceData, priceHistory: PriceData[]): StablecoinState {
+  calculateRiskScore(priceData: PriceData, priceHistory: PriceData[], jupiterLiquidityScore?: number): StablecoinState {
     const priceDeviationScore = this.calcPriceDeviationScore(priceData.price);
-    const liquidityScore = this.calcLiquidityScore(priceData);
+    const liquidityScore = jupiterLiquidityScore ?? this.calcLiquidityScore(priceData);
     const volumeAnomalyScore = this.calcVolumeAnomalyScore(priceData.symbol, priceHistory);
     const whaleFlowScore = this.calcWhaleFlowScore(priceData.symbol);
 

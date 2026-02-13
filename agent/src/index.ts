@@ -47,6 +47,7 @@ class StableGuardAgent {
   private onChain: OnChainClient;
   private isRunning = false;
   private riskScores: Map<StablecoinSymbol, number> = new Map();
+  private liquidityCache: Map<StablecoinSymbol, number> = new Map();
 
   constructor() {
     this.monitor = new PriceMonitor();
@@ -114,12 +115,39 @@ class StableGuardAgent {
 
     // 2. Calculate risk scores for each stablecoin
     const states: StablecoinState[] = [];
+    const fetchedSymbols = new Set(prices.map(p => p.symbol));
+
+    // Update Jupiter liquidity scores every 6 ticks (~60s)
+    if (agentState.tickCount % 6 === 1) {
+      await this.updateLiquidityScores(prices);
+    }
 
     for (const priceData of prices) {
       const history = this.monitor.getHistory(priceData.symbol);
-      const state = this.riskEngine.calculateRiskScore(priceData, history);
+      const jupLiquidity = this.liquidityCache.get(priceData.symbol);
+      const state = this.riskEngine.calculateRiskScore(priceData, history, jupLiquidity);
       states.push(state);
       this.riskScores.set(priceData.symbol, state.riskScore);
+    }
+
+    // Add unavailable stablecoins so dashboard shows them
+    const allSymbols: StablecoinSymbol[] = ["USDC", "USDT", "PYUSD"];
+    for (const sym of allSymbols) {
+      if (!fetchedSymbols.has(sym)) {
+        states.push({
+          symbol: sym,
+          name: STABLECOIN_NAMES[sym] || sym,
+          price: 0,
+          confidence: 0,
+          riskScore: -1,
+          priceDeviationScore: 0,
+          liquidityScore: 0,
+          volumeAnomalyScore: 0,
+          whaleFlowScore: 0,
+          lastUpdated: new Date(),
+          feedUnavailable: true,
+        });
+      }
     }
 
     // 3. Update global state
@@ -144,32 +172,20 @@ class StableGuardAgent {
     const riskLevel = this.riskEngine.getRiskLevel(state.riskScore);
 
     if (state.riskScore >= ACTION_CONFIG.EMERGENCY_THRESHOLD) {
-      // CRITICAL - Emergency exit
+      // CRITICAL - Emergency exit with swap simulation
       const safest = this.executor.findSafestStablecoin(this.riskScores, state.symbol);
-      const action: AgentAction = {
-        timestamp: new Date(),
-        type: "EMERGENCY_EXIT",
-        fromToken: state.symbol,
-        toToken: safest,
-        riskScore: state.riskScore,
-        details: `CRITICAL: ${state.symbol} risk at ${state.riskScore}/100 (price: $${state.price.toFixed(4)}). Emergency swap to ${safest}.`,
-      };
-      this.executor.logAction(action);
+      const action = await this.executor.executeProtectiveSwap(
+        state.symbol, safest, state.riskScore, "EMERGENCY_EXIT"
+      );
       agentState.actions = this.executor.getRecentActions(50);
       this.onChain.logActionOnChain(action).catch(() => {});
 
     } else if (state.riskScore >= ACTION_CONFIG.REBALANCE_THRESHOLD) {
-      // HIGH - Auto-rebalance
+      // HIGH - Auto-rebalance with swap simulation
       const safest = this.executor.findSafestStablecoin(this.riskScores, state.symbol);
-      const action: AgentAction = {
-        timestamp: new Date(),
-        type: "REBALANCE",
-        fromToken: state.symbol,
-        toToken: safest,
-        riskScore: state.riskScore,
-        details: `HIGH RISK: ${state.symbol} at ${state.riskScore}/100 (price: $${state.price.toFixed(4)}). Rebalancing to ${safest}.`,
-      };
-      this.executor.logAction(action);
+      const action = await this.executor.executeProtectiveSwap(
+        state.symbol, safest, state.riskScore, "REBALANCE"
+      );
       agentState.actions = this.executor.getRecentActions(50);
       this.onChain.logActionOnChain(action).catch(() => {});
 
@@ -193,6 +209,28 @@ class StableGuardAgent {
         agentState.actions = this.executor.getRecentActions(50);
         this.onChain.logActionOnChain(action).catch(() => {});
       }
+    }
+  }
+
+  private async updateLiquidityScores(prices: import("./monitor").PriceData[]): Promise<void> {
+    try {
+      const results = await Promise.allSettled(
+        prices.map(async (p) => {
+          // Check liquidity by getting Jupiter quote for $100K swap to USDC (or USDT if already USDC)
+          const target: StablecoinSymbol = p.symbol === "USDC" ? "USDT" : "USDC";
+          const score = await this.executor.checkLiquidity(p.symbol, target);
+          return { symbol: p.symbol, score };
+        })
+      );
+      for (const result of results) {
+        if (result.status === "fulfilled" && result.value.score !== null) {
+          this.liquidityCache.set(result.value.symbol, result.value.score);
+        }
+      }
+      const cached = Array.from(this.liquidityCache.entries()).map(([s, v]) => `${s}:${v}`).join(", ");
+      console.log(`[Liquidity] Jupiter scores updated: ${cached}`);
+    } catch (error) {
+      console.error("[Liquidity] Error updating scores:", error);
     }
   }
 
