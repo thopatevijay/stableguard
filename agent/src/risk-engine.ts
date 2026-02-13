@@ -1,6 +1,7 @@
 import {
   RISK_WEIGHTS,
   RISK_THRESHOLDS,
+  STABLECOIN_NAMES,
   type StablecoinSymbol,
   type StablecoinState,
 } from "./config";
@@ -48,7 +49,7 @@ export class RiskEngine {
 
     return {
       symbol: priceData.symbol,
-      name: priceData.symbol,
+      name: STABLECOIN_NAMES[priceData.symbol] || priceData.symbol,
       price: priceData.price,
       confidence: priceData.confidence,
       riskScore: Math.min(100, Math.max(0, riskScore)),
