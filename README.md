@@ -22,6 +22,101 @@ Today, stablecoin holders must manually monitor prices, check liquidity, and exe
 
 ---
 
+## How It Works: The Autonomous Flow
+
+### The Agent Has Its Own Wallet
+
+StableGuard runs with its own Solana keypair. It doesn't need the user to be online or connected. The agent perceives market conditions, reasons about risk, and acts — all without human input.
+
+```
+USER (one-time setup)                        AGENT (runs 24/7, no human needed)
+─────────────────────                        ──────────────────────────────────
+1. Deposits USDC/USDT/PYUSD                  Monitors Pyth oracle prices every 10s
+   into StableGuard vault (PDA)              Checks Jupiter liquidity depth
+                                             Tracks volume anomalies & whale flows
+2. Sets risk thresholds                      Computes composite risk score (0-100)
+   (or uses defaults)
+                                             Risk > 26 → ALERT (increase monitoring to 3s)
+3. Goes to sleep                             Risk > 51 → AUTO-REBALANCE (swap to safer coin)
+                                             Risk > 76 → EMERGENCY EXIT (exit to safest asset)
+4. Wakes up, checks dashboard
+   to see what agent did overnight            Every action logged on-chain in PDA
+```
+
+### Three Trust Models
+
+| Model | How It Works | Trust Level |
+|-------|-------------|-------------|
+| **Agent-Owned Treasury** (hackathon MVP) | Agent has its own wallet, manages a treasury PDA. Swaps executed directly by the agent's keypair. | Custodial — user trusts agent |
+| **Delegated Vault** (production) | User deposits into Anchor vault PDA. Agent pubkey authorized as "manager" with constraints: can ONLY swap between whitelisted stablecoins via Jupiter. User can withdraw anytime. | Semi-custodial — smart contract enforced limits |
+| **Alert Only** (non-custodial) | Agent monitors and sends alerts. User must act manually. | Non-custodial — but NOT truly autonomous |
+
+For the hackathon, we demonstrate **Model A** on devnet. Swaps show real Jupiter quotes but are marked `[SIMULATED]` since devnet lacks real stablecoin liquidity. The decision-making, risk scoring, and on-chain logging are fully live and autonomous.
+
+### What Happens During a Depeg (End-to-End)
+
+```
+1. USDC price drops to $0.994 on Pyth oracle
+2. Agent detects: price deviation score = 50 (0.6% from peg)
+3. Agent checks Jupiter: USDC→USDT slippage rising to 1.2% → liquidity score = 50
+4. Composite risk = 0.40×50 + 0.30×50 + 0.20×25 + 0.10×0 = 40 (MEDIUM)
+5. Agent sends ALERT, increases polling to every 3 seconds
+
+6. USDC drops further to $0.985 → price deviation = 75, liquidity = 75
+7. Composite risk = 62 (HIGH) → exceeds rebalance threshold (51)
+8. Agent fetches Jupiter quote: swap $10K USDC → 9,988 USDT (0.12% slippage)
+9. Agent signs and submits swap TX with its keypair
+10. Action logged on-chain: "REBALANCE: USDC→USDT, risk 62/100"
+
+11. If USDC crashes to $0.95 → risk = 89 (CRITICAL) → EMERGENCY EXIT
+12. Agent swaps ALL remaining USDC to safest asset
+13. Total time from detection to action: < 10 seconds
+```
+
+---
+
+## User Stories
+
+### Depeg Protection
+
+**As a DeFi user holding $50K in USDC across Kamino and MarginFi,**
+I want an agent that monitors stablecoin peg health 24/7, so that I don't lose funds to a depeg event while I'm sleeping.
+
+**As a treasury manager holding $200K in USDT,**
+I want the agent to auto-swap to a safer stablecoin when depeg risk exceeds my threshold, so that my funds are protected before I even see the headline.
+
+**As a PYUSD holder on Solana,**
+I want the agent to detect when DEX liquidity is evaporating (like the USX crash in Dec 2025), so that I can exit before slippage makes it impossible.
+
+### Risk Intelligence
+
+**As a DeFi user managing multiple stablecoins,**
+I want a dashboard showing real-time risk gauges for each stablecoin, so that I can assess my portfolio risk at a glance.
+
+**As a risk-conscious DeFi user,**
+I want to see live price charts showing deviation from $1.00 peg, so that I can spot trends before they become critical.
+
+**As a user whose funds are managed by an autonomous agent,**
+I want to see a log of every action the agent has taken (alerts, swaps, exits) with full reasoning, so that I can trust and verify its decisions.
+
+### Yield Optimization
+
+**As a stablecoin holder looking to maximize returns,**
+I want to see current APYs across Kamino and MarginFi side-by-side, so that I can find the best risk-adjusted yield.
+
+**As a DAO treasury manager,**
+I want the agent to recommend optimal stablecoin allocation based on both yield AND risk, so that I'm not chasing yield into a stablecoin that's about to depeg.
+
+### On-Chain Transparency
+
+**As a DAO member whose treasury is managed by StableGuard,**
+I want all portfolio state stored on-chain in Anchor PDAs, so that anyone can verify the agent's holdings and decisions trustlessly.
+
+**As a hackathon judge evaluating StableGuard,**
+I want to see that the agent runs a continuous loop without human input, so that I can confirm this is genuinely autonomous — not just automation with a fancy UI.
+
+---
+
 ## What Makes This Autonomous (Not Just Automation)
 
 A cron job that checks prices is **automation**. StableGuard is an **agent** — it perceives, reasons, decides, acts, and explains without human intervention.
