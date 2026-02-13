@@ -42,7 +42,7 @@ export default function YieldTable({ yields }: YieldTableProps) {
               return rows.map((y, i) => (
                 <tr
                   key={`${y.protocol}-${y.symbol}`}
-                  className="border-b border-gray-800/50 hover:bg-gray-800/30"
+                  className="border-b border-gray-800/50 hover:bg-gray-800/40 transition-colors duration-150"
                 >
                   {i === 0 ? (
                     <td
@@ -57,7 +57,7 @@ export default function YieldTable({ yields }: YieldTableProps) {
                     <span
                       className={
                         y === best
-                          ? "text-emerald-400 font-semibold"
+                          ? "text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10"
                           : "text-gray-300"
                       }
                     >

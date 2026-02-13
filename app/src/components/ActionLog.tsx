@@ -28,9 +28,14 @@ export default function ActionLog({ actions }: ActionLogProps) {
       </h3>
 
       {sorted.length === 0 ? (
-        <div className="text-center py-8 text-gray-500">
-          <p className="text-sm">No actions taken yet</p>
-          <p className="text-xs mt-1">All stablecoins within safe parameters</p>
+        <div className="text-center py-12 text-gray-500">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-emerald-500/10 flex items-center justify-center">
+            <svg className="w-8 h-8 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p className="text-sm font-medium">No actions taken yet</p>
+          <p className="text-xs mt-1 text-gray-600">All stablecoins within safe parameters</p>
         </div>
       ) : (
         <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
@@ -40,7 +45,8 @@ export default function ActionLog({ actions }: ActionLogProps) {
             return (
               <div
                 key={i}
-                className={`${style.bg} border border-gray-800 rounded-lg p-3 flex items-start gap-3`}
+                className={`${style.bg} border border-gray-800 rounded-lg p-3 flex items-start gap-3 animate-fade-in-up hover:border-gray-700 transition-all duration-200`}
+                style={{ animationDelay: `${i * 50}ms` }}
               >
                 <div
                   className={`${style.color} w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 border border-current/20`}
